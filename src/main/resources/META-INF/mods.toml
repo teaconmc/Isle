@@ -1,0 +1,19 @@
+modLoader="javafml"
+loaderVersion="[34,)"
+license="BSD-3-Clause"
+
+[[mods]]
+modId="isle"
+version="${file.jarVersion}"
+displayName="Isle"
+credits="AlcatrazEscapee for his code in TerraFirmaCraft"
+authors="3TUSK"
+description="Generate a big lonely island"
+
+[[dependencies.nickname]]
+    modId="forge"
+    mandatory=true
+    # With Forge PR #7521
+    versionRange="[35.1.6,)"
+    ordering="NONE"
+    side="BOTH"
