@@ -100,6 +100,12 @@ public final class Isle {
         river = LayerUtil.repeat(1000, ZoomLayer.NORMAL, main, 0, noiseGenerator);
         river = StartRiverLayer.INSTANCE.apply(noiseGenerator.apply(100), river);
 
+        // set to island
+        // ======== START ========
+        main = IsleFillOceanLayer.INSTANCE.apply(noiseGenerator.apply(500), main);
+        main = IsleFillLandLayer.INSTANCE.apply(noiseGenerator.apply(500), main);
+        // ========= END =========
+
         biome = new BiomeLayer(false).apply(noiseGenerator.apply(200), main);
         biome = AddBambooForestLayer.INSTANCE.apply(noiseGenerator.apply(1001), biome);
         biome = LayerUtil.repeat(1000, ZoomLayer.NORMAL, biome, 2, noiseGenerator);
@@ -114,12 +120,6 @@ public final class Isle {
         river = SmoothLayer.INSTANCE.apply(noiseGenerator.apply(1000), river);
 
         biome = RareBiomeLayer.INSTANCE.apply(noiseGenerator.apply(1001), biome);
-
-        // set to island
-        // ======== START ========
-        biome = IsleFillOceanLayer.INSTANCE.apply(noiseGenerator.apply(500), biome);
-        biome = IsleFillLandLayer.INSTANCE.apply(noiseGenerator.apply(500), biome);
-        // ========= END =========
 
         // zoom only twice (vanilla: four times)
         biome = ZoomLayer.NORMAL.apply(noiseGenerator.apply(1000), biome);
@@ -154,7 +154,7 @@ public final class Isle {
         @Override
         public int func_215728_a(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
             int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
-            return x * x + z * z < 512 ? biome : isSimpleOcean(biome) ? biome : 0;
+            return x * x + x + z * z + z < 31 ? biome : isSimpleOcean(biome) ? biome : 0;
         }
     }
 
@@ -166,7 +166,7 @@ public final class Isle {
         @Override
         public int func_215728_a(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
             int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
-            return x * x + x + z * z + z < 256 ? isSimpleOcean(biome) ? 1 : biome : biome;
+            return x * x + x + z * z + z < 15 ? isSimpleOcean(biome) ? 1 : biome : biome;
         }
     }
 
@@ -178,7 +178,7 @@ public final class Isle {
         @Override
         public int func_215728_a(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
             int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
-            return Math.max(x * x + x, z * z + z) < 128 * 128 ? biome : this.filtered(biome);
+            return Math.max(x * x + x, z * z + z) < 127 * 127 ? biome : this.filtered(biome);
         }
 
         private int filtered(int biome) {
