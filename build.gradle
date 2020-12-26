@@ -72,8 +72,8 @@ dependencies {
 jar {
     manifest {
         attributes([
-            "Specification-Title": "Area-Control",
-            "Specification-Vendor": "TeaConMC",
+            "Specification-Title": "Isle",
+            "Specification-Vendor": "ustc-zzzz",
             "Specification-Version": "1",
             "Implementation-Title": project.name,
             "Implementation-Version": "${version}",
