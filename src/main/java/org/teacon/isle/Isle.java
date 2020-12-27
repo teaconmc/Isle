@@ -143,7 +143,7 @@ public final class Isle {
     }
 
     private static boolean isSimpleOcean(int i) {
-        return i == 0 || i == 24 || i >= 44 && i <= 49;
+        return i == 0 || i == 24 || i == 45 || i == 46 || i == 48 || i == 49;
     }
 
     @MethodsReturnNonnullByDefault
