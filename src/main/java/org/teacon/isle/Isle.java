@@ -146,6 +146,14 @@ public final class Isle {
         return i == 0 || i == 24 || i == 45 || i == 46 || i == 48 || i == 49;
     }
 
+    private static int filterOcean(int i) {
+        if (i == 10) return 46; // frozen => cold, drop spikes
+        if (i == 50) return 49; // deep frozen => deep cold, drop spikes
+        if (i == 44) return 45; // warm => luke warm, drop corals
+        if (i == 47) return 48; // deep warm => deep luke warm, drop corals
+        return i;
+    }
+
     @MethodsReturnNonnullByDefault
     @ParametersAreNonnullByDefault
     private enum IsleFillOceanLayer implements IAreaTransformer1, IDimOffset1Transformer {
@@ -154,7 +162,7 @@ public final class Isle {
         @Override
         public int func_215728_a(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
             int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
-            return x * x + x + z * z + z < 31 ? biome : isSimpleOcean(biome) ? biome : 0;
+            return x * x + x + z * z + z < 31 ? biome : isSimpleOcean(filterOcean(biome)) ? biome : 0;
         }
     }
 
@@ -166,7 +174,7 @@ public final class Isle {
         @Override
         public int func_215728_a(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
             int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
-            return x * x + x + z * z + z < 15 ? isSimpleOcean(biome) ? 1 : biome : biome;
+            return x * x + x + z * z + z < 15 ? isSimpleOcean(filterOcean(biome)) ? 1 : biome : biome;
         }
     }
 
@@ -182,11 +190,8 @@ public final class Isle {
         }
 
         private int filtered(int biome) {
-            if (biome == 10) return 46; // frozen => cold, drop spikes
-            if (biome == 50) return 49; // deep frozen => deep cold, drop spikes
-            if (biome == 44) return 45; // warm => luke warm, drop corals
-            if (biome == 47) return 48; // deep warm => deep luke warm, drop corals
-            return isSimpleOcean(biome) ? biome : 24;
+            int filtered = filterOcean(biome);
+            return isSimpleOcean(filtered) ? filtered : 24;
         }
     }
 
