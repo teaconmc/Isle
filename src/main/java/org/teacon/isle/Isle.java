@@ -46,8 +46,12 @@ import net.minecraftforge.api.distmarker.OnlyIn;
 import net.minecraftforge.common.world.ForgeWorldType;
 import net.minecraftforge.event.RegistryEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.fml.ExtensionPoint;
+import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.ObfuscationReflectionHelper;
+import net.minecraftforge.fml.network.FMLNetworkConstants;
+import org.apache.commons.lang3.tuple.Pair;
 
 import javax.annotation.ParametersAreNonnullByDefault;
 import java.util.List;
@@ -57,6 +61,11 @@ import java.util.function.LongFunction;
 @Mod("isle")
 @Mod.EventBusSubscriber(modid = "isle", bus = Mod.EventBusSubscriber.Bus.MOD)
 public final class Isle {
+
+    public Isle() {
+        ModLoadingContext.get().registerExtensionPoint(ExtensionPoint.DISPLAYTEST, () -> Pair.of(
+                () -> FMLNetworkConstants.IGNORESERVERONLY, (serverVer, isDedicated) -> true));
+    }
 
     @SubscribeEvent
     public static void levelType(RegistryEvent.Register<ForgeWorldType> event) {
