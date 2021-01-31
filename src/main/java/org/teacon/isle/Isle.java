@@ -61,6 +61,8 @@ import java.util.function.LongFunction;
 @Mod("isle")
 @Mod.EventBusSubscriber(modid = "isle", bus = Mod.EventBusSubscriber.Bus.MOD)
 public final class Isle {
+    private static final float ISLE_SCALE_SQ = 4F / 3F;
+    private static final int ISLE_BIOME_MAX_RADIUS_SQ = 128 * 128;
 
     public Isle() {
         ModLoadingContext.get().registerExtensionPoint(ExtensionPoint.DISPLAYTEST, () -> Pair.of(
@@ -151,6 +153,12 @@ public final class Isle {
         return result;
     }
 
+    private static float affectedRangeSq(float biomeCoordinate, int zoomFactor) {
+        float zoomScale = 1 << zoomFactor, zoomed = 0.5F + biomeCoordinate * zoomScale;
+        float zoomedWithAffected = Math.abs(zoomed) + 0.5F * zoomScale;
+        return zoomedWithAffected * zoomedWithAffected;
+    }
+
     private static boolean isSimpleOcean(int i) {
         return i == 0 || i == 24 || i == 45 || i == 46 || i == 48 || i == 49;
     }
@@ -165,25 +173,27 @@ public final class Isle {
 
     @MethodsReturnNonnullByDefault
     @ParametersAreNonnullByDefault
-    private enum IsleFillOceanLayer implements IAreaTransformer1, IDimOffset1Transformer {
+    private enum IsleFillOceanLayer implements IAreaTransformer1, IDimOffset0Transformer {
         INSTANCE;
 
         @Override
         public int func_215728_a(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
             int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
-            return x * x + x + z * z + z < 31 ? biome : isSimpleOcean(filterOcean(biome)) ? biome : 0;
+            float affectedRangeSq = (affectedRangeSq(x, 4) + affectedRangeSq(z, 4)) * ISLE_SCALE_SQ;
+            return affectedRangeSq < ISLE_BIOME_MAX_RADIUS_SQ ? biome : isSimpleOcean(filterOcean(biome)) ? biome : 0;
         }
     }
 
     @MethodsReturnNonnullByDefault
     @ParametersAreNonnullByDefault
-    private enum IsleFillLandLayer implements IAreaTransformer1, IDimOffset1Transformer {
+    private enum IsleFillLandLayer implements IAreaTransformer1, IDimOffset0Transformer {
         INSTANCE;
 
         @Override
         public int func_215728_a(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
             int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
-            return x * x + x + z * z + z < 15 ? isSimpleOcean(filterOcean(biome)) ? 1 : biome : biome;
+            float affectedRangeSq = (affectedRangeSq(x, 4) + affectedRangeSq(z, 4)) * ISLE_SCALE_SQ * ISLE_SCALE_SQ;
+            return affectedRangeSq < ISLE_BIOME_MAX_RADIUS_SQ ? isSimpleOcean(filterOcean(biome)) ? 1 : biome : biome;
         }
     }
 
@@ -195,7 +205,8 @@ public final class Isle {
         @Override
         public int func_215728_a(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
             int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
-            return Math.max(x * x + x, z * z + z) < 127 * 127 ? biome : this.filtered(biome);
+            float affectedRangeSq = Math.max(affectedRangeSq(x, 0), affectedRangeSq(z, 0));
+            return affectedRangeSq < ISLE_BIOME_MAX_RADIUS_SQ ? biome : this.filtered(biome);
         }
 
         private int filtered(int biome) {
