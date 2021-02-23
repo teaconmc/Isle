@@ -40,7 +40,6 @@ import net.minecraft.world.gen.layer.StartRiverLayer;
 import net.minecraft.world.gen.layer.ZoomLayer;
 import net.minecraft.world.gen.layer.traits.IAreaTransformer1;
 import net.minecraft.world.gen.layer.traits.IDimOffset0Transformer;
-import net.minecraft.world.gen.layer.traits.IDimOffset1Transformer;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.api.distmarker.OnlyIn;
 import net.minecraftforge.common.world.ForgeWorldType;
@@ -61,8 +60,9 @@ import java.util.function.LongFunction;
 @Mod("isle")
 @Mod.EventBusSubscriber(modid = "isle", bus = Mod.EventBusSubscriber.Bus.MOD)
 public final class Isle {
-    private static final float ISLE_SCALE_SQ = 4F / 3F;
-    private static final int ISLE_BIOME_MAX_RADIUS_SQ = 128 * 128;
+    private static final float EXPONENT = 5F / 2F;
+    private static final float ISLE_SCALE = 4F / 3F;
+    private static final float ISLE_BIOME_MAX_RADIUS = (float) Math.pow(128, EXPONENT);
 
     public Isle() {
         ModLoadingContext.get().registerExtensionPoint(ExtensionPoint.DISPLAYTEST, () -> Pair.of(
@@ -153,10 +153,10 @@ public final class Isle {
         return result;
     }
 
-    private static float affectedRangeSq(float biomeCoordinate, int zoomFactor) {
+    private static float affectedRange(float biomeCoordinate, int zoomFactor) {
         float zoomScale = 1 << zoomFactor, zoomed = 0.5F + biomeCoordinate * zoomScale;
-        float zoomedWithAffected = Math.abs(zoomed) + 0.5F * zoomScale;
-        return zoomedWithAffected * zoomedWithAffected;
+        float zoomedAffected = Math.abs(zoomed) + 0.5F * zoomScale;
+        return (float) Math.pow(zoomedAffected, EXPONENT);
     }
 
     private static boolean isSimpleOcean(int i) {
@@ -179,8 +179,8 @@ public final class Isle {
         @Override
         public int func_215728_a(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
             int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
-            float affectedRangeSq = (affectedRangeSq(x, 4) + affectedRangeSq(z, 4)) * ISLE_SCALE_SQ;
-            return affectedRangeSq < ISLE_BIOME_MAX_RADIUS_SQ ? biome : isSimpleOcean(filterOcean(biome)) ? biome : 0;
+            float affectedRange = (affectedRange(x, 4) + affectedRange(z, 4)) * ISLE_SCALE;
+            return affectedRange < ISLE_BIOME_MAX_RADIUS ? biome : isSimpleOcean(filterOcean(biome)) ? biome : 0;
         }
     }
 
@@ -192,8 +192,8 @@ public final class Isle {
         @Override
         public int func_215728_a(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
             int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
-            float affectedRangeSq = (affectedRangeSq(x, 4) + affectedRangeSq(z, 4)) * ISLE_SCALE_SQ * ISLE_SCALE_SQ;
-            return affectedRangeSq < ISLE_BIOME_MAX_RADIUS_SQ ? isSimpleOcean(filterOcean(biome)) ? 1 : biome : biome;
+            float affectedRange = (affectedRange(x, 4) + affectedRange(z, 4)) * ISLE_SCALE * ISLE_SCALE;
+            return affectedRange < ISLE_BIOME_MAX_RADIUS ? isSimpleOcean(filterOcean(biome)) ? 1 : biome : biome;
         }
     }
 
@@ -205,8 +205,8 @@ public final class Isle {
         @Override
         public int func_215728_a(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
             int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
-            float affectedRangeSq = Math.max(affectedRangeSq(x, 0), affectedRangeSq(z, 0));
-            return affectedRangeSq < ISLE_BIOME_MAX_RADIUS_SQ ? biome : this.filtered(biome);
+            float affectedRange = Math.max(affectedRange(x, 0), affectedRange(z, 0));
+            return affectedRange < ISLE_BIOME_MAX_RADIUS ? biome : this.filtered(biome);
         }
 
         private int filtered(int biome) {
