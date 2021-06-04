@@ -60,9 +60,9 @@ import java.util.function.LongFunction;
 @Mod("isle")
 @Mod.EventBusSubscriber(modid = "isle", bus = Mod.EventBusSubscriber.Bus.MOD)
 public final class Isle {
-    private static final float EXPONENT = 5F / 2F;
-    private static final float ISLE_SCALE = 4F / 3F;
-    private static final float ISLE_BIOME_MAX_RADIUS = (float) Math.pow(128, EXPONENT);
+    private static final float ISLE_BIOME_RADIUS_SQ = 192F * 192F;
+    private static final float ISLE_SCALE_SQ = (float) Math.PI / 2F;
+    private static final float ISLE_TOLERANCE_SQ = (float) Math.pow(ISLE_SCALE_SQ, 0.25F);
 
     public Isle() {
         ModLoadingContext.get().registerExtensionPoint(ExtensionPoint.DISPLAYTEST, () -> Pair.of(
@@ -111,16 +111,15 @@ public final class Isle {
         river = LayerUtil.repeat(1000, ZoomLayer.NORMAL, main, 0, noiseGenerator);
         river = StartRiverLayer.INSTANCE.apply(noiseGenerator.apply(100), river);
 
-        // set to island
-        // ======== START ========
-        main = IsleFillOceanLayer.INSTANCE.apply(noiseGenerator.apply(500), main);
-        main = IsleFillLandLayer.INSTANCE.apply(noiseGenerator.apply(500), main);
-        // ========= END =========
-
         biome = new BiomeLayer(false).apply(noiseGenerator.apply(200), main);
         biome = AddBambooForestLayer.INSTANCE.apply(noiseGenerator.apply(1001), biome);
         biome = LayerUtil.repeat(1000, ZoomLayer.NORMAL, biome, 2, noiseGenerator);
         biome = EdgeBiomeLayer.INSTANCE.apply(noiseGenerator.apply(1000), biome);
+
+        // set to island
+        // ======== START ========
+        biome = IsleFillLandOceanLayer.INSTANCE.apply(noiseGenerator.apply(500), biome);
+        // ========= END =========
 
         hill = LayerUtil.repeat(1000, ZoomLayer.NORMAL, river, 2, noiseGenerator);
         biome = HillsLayer.INSTANCE.apply(noiseGenerator.apply(1000), biome, hill);
@@ -132,12 +131,12 @@ public final class Isle {
 
         biome = RareBiomeLayer.INSTANCE.apply(noiseGenerator.apply(1001), biome);
 
-        // zoom only twice (vanilla: four times)
+        // zoom only three times (vanilla: four times)
         biome = ZoomLayer.NORMAL.apply(noiseGenerator.apply(1000), biome);
         biome = AddIslandLayer.INSTANCE.apply(noiseGenerator.apply(3), biome);
         biome = ZoomLayer.NORMAL.apply(noiseGenerator.apply(1001), biome);
         biome = ShoreLayer.INSTANCE.apply(noiseGenerator.apply(1000), biome);
-        /* biome = ZoomLayer.NORMAL.apply(noiseGenerator.apply(1002), biome); */
+        biome = ZoomLayer.NORMAL.apply(noiseGenerator.apply(1002), biome);
         /* biome = ZoomLayer.NORMAL.apply(noiseGenerator.apply(1003), biome); */
 
         biome = SmoothLayer.INSTANCE.apply(noiseGenerator.apply(1000), biome);
@@ -153,10 +152,10 @@ public final class Isle {
         return result;
     }
 
-    private static float affectedRange(float biomeCoordinate, int zoomFactor) {
+    private static float affectedRangeSq(float biomeCoordinate, int zoomFactor) {
         float zoomScale = 1 << zoomFactor, zoomed = 0.5F + biomeCoordinate * zoomScale;
         float zoomedAffected = Math.abs(zoomed) + 0.5F * zoomScale;
-        return (float) Math.pow(zoomedAffected, EXPONENT);
+        return zoomedAffected * zoomedAffected;
     }
 
     private static boolean isSimpleOcean(int i) {
@@ -173,27 +172,28 @@ public final class Isle {
 
     @MethodsReturnNonnullByDefault
     @ParametersAreNonnullByDefault
-    private enum IsleFillOceanLayer implements IAreaTransformer1, IDimOffset0Transformer {
+    private enum IsleFillLandOceanLayer implements IAreaTransformer1, IDimOffset0Transformer {
         INSTANCE;
 
         @Override
         public int func_215728_a(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
-            int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
-            float affectedRange = (affectedRange(x, 4) + affectedRange(z, 4)) * ISLE_SCALE;
-            return affectedRange < ISLE_BIOME_MAX_RADIUS ? biome : isSimpleOcean(filterOcean(biome)) ? biome : 0;
-        }
-    }
-
-    @MethodsReturnNonnullByDefault
-    @ParametersAreNonnullByDefault
-    private enum IsleFillLandLayer implements IAreaTransformer1, IDimOffset0Transformer {
-        INSTANCE;
-
-        @Override
-        public int func_215728_a(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
-            int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
-            float affectedRange = (affectedRange(x, 4) + affectedRange(z, 4)) * ISLE_SCALE * ISLE_SCALE;
-            return affectedRange < ISLE_BIOME_MAX_RADIUS ? isSimpleOcean(filterOcean(biome)) ? 1 : biome : biome;
+            float innerSq = (affectedRangeSq(x, 3) + affectedRangeSq(z, 3)) * (ISLE_SCALE_SQ / ISLE_TOLERANCE_SQ);
+            float outerSq = (affectedRangeSq(x, 3) + affectedRangeSq(z, 3)) * (ISLE_SCALE_SQ * ISLE_TOLERANCE_SQ);
+            boolean holdsInner = true, holdsOuter = true;
+            while (true) {
+                float r1 = (innerSq + outerSq) / 2, r2 = noiseGenerator.random(2) == 0 ? innerSq : outerSq;
+                if (!holdsInner) {
+                    int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
+                    return isSimpleOcean(filterOcean(biome)) ? biome : 0;
+                }
+                if (!holdsOuter) {
+                    int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
+                    return isSimpleOcean(filterOcean(biome)) ? 1 : biome;
+                }
+                innerSq = Math.min(r1, r2); outerSq = Math.max(r1, r2);
+                holdsInner = innerSq < ISLE_BIOME_RADIUS_SQ;
+                holdsOuter = outerSq > ISLE_BIOME_RADIUS_SQ;
+            }
         }
     }
 
@@ -205,11 +205,11 @@ public final class Isle {
         @Override
         public int func_215728_a(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
             int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
-            float affectedRange = Math.max(affectedRange(x, 0), affectedRange(z, 0));
-            return affectedRange < ISLE_BIOME_MAX_RADIUS ? biome : this.filtered(biome);
+            float affectedRangeSq = Math.max(affectedRangeSq(x, 0), affectedRangeSq(z, 0));
+            return affectedRangeSq < ISLE_BIOME_RADIUS_SQ ? biome : this.oceanFiltered(biome);
         }
 
-        private int filtered(int biome) {
+        private int oceanFiltered(int biome) {
             int filtered = filterOcean(biome);
             return isSimpleOcean(filtered) ? filtered : 24;
         }
