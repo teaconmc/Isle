@@ -9,9 +9,10 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath group: 'net.minecraftforge.gradle', name: 'ForgeGradle', version: '3.+', changing: true
+        classpath group: 'net.minecraftforge.gradle', name: 'ForgeGradle', version: '4.1.+', changing: true
     }
 }
+
 apply plugin: 'net.minecraftforge.gradle'
 apply plugin: 'eclipse'
 apply plugin: 'maven-publish'
@@ -20,17 +21,11 @@ version = '0.2.1'
 group = 'org.teacon'
 archivesBaseName = 'Isle-Forge-1.16'
 
-sourceCompatibility = targetCompatibility = compileJava.sourceCompatibility = compileJava.targetCompatibility = '1.8'
-
-repositories {
-    maven {
-        url "https://maven.tterrag.com/"
-    }
-}
+java.toolchain.languageVersion = JavaLanguageVersion.of(8)
 
 minecraft {
-    mappings channel: 'snapshot', version: '20201225-mixed-1.16.4'
-    
+    mappings channel: 'snapshot', version: '20210309-1.16.5'
+
     runs {
         client {
             workingDirectory project.file('run')
@@ -66,7 +61,7 @@ minecraft {
 }
 
 dependencies {
-    minecraft 'net.minecraftforge:forge:1.16.4-35.1.13'
+    minecraft 'net.minecraftforge:forge:1.16.5-36.1.0'
 }
 
 jar {

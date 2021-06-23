@@ -72,7 +72,7 @@ public final class Isle {
     @SubscribeEvent
     public static void levelType(RegistryEvent.Register<ForgeWorldType> event) {
         // The corresponding forge registry is not provided so we can only do this.
-        Registry.register(Registry.BIOME_SOURCE, "isle:isle", IsleBiomeProvider.CODEC);
+        Registry.register(Registry.BIOME_PROVIDER_CODEC, "isle:isle", IsleBiomeProvider.CODEC);
         event.getRegistry().register(new ForgeWorldType(Isle::createChunkGen).setRegistryName("isle:isle"));
     }
 
@@ -176,18 +176,18 @@ public final class Isle {
         INSTANCE;
 
         @Override
-        public int func_215728_a(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
+        public int apply(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
             float innerSq = (affectedRangeSq(x, 3) + affectedRangeSq(z, 3)) * (ISLE_SCALE_SQ / ISLE_TOLERANCE_SQ);
             float outerSq = (affectedRangeSq(x, 3) + affectedRangeSq(z, 3)) * (ISLE_SCALE_SQ * ISLE_TOLERANCE_SQ);
             boolean holdsInner = true, holdsOuter = true;
             while (true) {
                 float r1 = (innerSq + outerSq) / 2, r2 = noiseGenerator.random(2) == 0 ? innerSq : outerSq;
                 if (!holdsInner) {
-                    int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
+                    int biome = area.getValue(this.getOffsetX(x), this.getOffsetZ(z));
                     return isSimpleOcean(filterOcean(biome)) ? biome : 0;
                 }
                 if (!holdsOuter) {
-                    int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
+                    int biome = area.getValue(this.getOffsetX(x), this.getOffsetZ(z));
                     return isSimpleOcean(filterOcean(biome)) ? 1 : biome;
                 }
                 innerSq = Math.min(r1, r2); outerSq = Math.max(r1, r2);
@@ -203,8 +203,8 @@ public final class Isle {
         INSTANCE;
 
         @Override
-        public int func_215728_a(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
-            int biome = area.getValue(this.func_215721_a(x), this.func_215722_b(z));
+        public int apply(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
+            int biome = area.getValue(this.getOffsetX(x), this.getOffsetZ(z));
             float affectedRangeSq = Math.max(affectedRangeSq(x, 0), affectedRangeSq(z, 0));
             return affectedRangeSq < ISLE_BIOME_RADIUS_SQ ? biome : this.oceanFiltered(biome);
         }
@@ -222,7 +222,7 @@ public final class Isle {
                 ObfuscationReflectionHelper.getPrivateValue(OverworldBiomeProvider.class, null, "field_226847_e_"));
 
         private static final Codec<IsleBiomeProvider> CODEC = RecordCodecBuilder.create(i -> i.group(
-                RegistryLookupCodec.of(Registry.BIOME_KEY).forGetter(p -> p.reg),
+                RegistryLookupCodec.getLookUpCodec(Registry.BIOME_KEY).forGetter(p -> p.reg),
                 Codec.LONG.fieldOf("seed").stable().forGetter(p -> p.seed))
                 .apply(i, i.stable(IsleBiomeProvider::new)));
 
@@ -230,7 +230,7 @@ public final class Isle {
         private final Layer layer;
         private final long seed;
 
-        public IsleBiomeProvider(Registry<Biome> reg, long seed) {
+        private IsleBiomeProvider(Registry<Biome> reg, long seed) {
             super(BIOMES.stream().map(k -> () -> reg.getOrThrow(k)));
             this.reg = reg;
             this.seed = seed;
@@ -238,19 +238,19 @@ public final class Isle {
         }
 
         @Override
-        protected Codec<? extends BiomeProvider> getCodec() {
+        protected Codec<? extends BiomeProvider> getBiomeProviderCodec() {
             return CODEC;
         }
 
         @Override
         @OnlyIn(Dist.CLIENT)
-        public BiomeProvider withSeed(long seed) {
+        public BiomeProvider getBiomeProvider(long seed) {
             return new IsleBiomeProvider(this.reg, seed);
         }
 
         @Override
-        public Biome getBiomeForNoiseGen(int x, int y, int z) {
-            return this.layer.sample(this.reg, x, z);
+        public Biome getNoiseBiome(int x, int y, int z) {
+            return this.layer.func_242936_a(this.reg, x, z);
         }
     }
 }
