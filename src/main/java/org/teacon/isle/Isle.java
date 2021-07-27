@@ -1,8 +1,10 @@
 package org.teacon.isle;
 
+import com.google.gson.JsonObject;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import mcp.MethodsReturnNonnullByDefault;
+import net.minecraft.util.JSONUtils;
 import net.minecraft.util.RegistryKey;
 import net.minecraft.util.registry.Registry;
 import net.minecraft.util.registry.RegistryLookupCodec;
@@ -60,9 +62,7 @@ import java.util.function.LongFunction;
 @Mod("isle")
 @Mod.EventBusSubscriber(modid = "isle", bus = Mod.EventBusSubscriber.Bus.MOD)
 public final class Isle {
-    private static final float ISLE_BIOME_RADIUS_SQ = 192F * 192F;
     private static final float ISLE_SCALE_SQ = (float) Math.PI / 2F;
-    private static final float ISLE_TOLERANCE_SQ = (float) Math.pow(ISLE_SCALE_SQ, 0.25F);
 
     public Isle() {
         ModLoadingContext.get().registerExtensionPoint(ExtensionPoint.DISPLAYTEST, () -> Pair.of(
@@ -76,11 +76,15 @@ public final class Isle {
         event.getRegistry().register(new ForgeWorldType(Isle::createChunkGen).setRegistryName("isle:isle"));
     }
 
-    private static ChunkGenerator createChunkGen(Registry<Biome> biomeReg, Registry<DimensionSettings> dimSettingsReg, long seed) {
-        return new NoiseChunkGenerator(new IsleBiomeProvider(biomeReg, seed), seed, () -> dimSettingsReg.getOrThrow(DimensionSettings.OVERWORLD));
+    private static ChunkGenerator createChunkGen(Registry<Biome> biomeReg, Registry<DimensionSettings> dimSettingsReg, long seed, String settingsString) {
+        JsonObject settings = settingsString.isEmpty() ? new JsonObject() : JSONUtils.fromJson(settingsString);
+        int tolerance = JSONUtils.getInt(settings, "tolerance", 16), borderRange = JSONUtils.getInt(settings, "border", 512);
+        return new NoiseChunkGenerator(new IsleBiomeProvider(biomeReg, tolerance, borderRange, seed), seed, () -> dimSettingsReg.getOrThrow(DimensionSettings.OVERWORLD));
     }
 
-    private static <T extends IArea> IAreaFactory<T> createAreaFactory(LongFunction<? extends IExtendedNoiseRandom<T>> noiseGenerator) {
+    private static <T extends IArea> IAreaFactory<T> createAreaFactory(int tolerance, int borderRange, LongFunction<? extends IExtendedNoiseRandom<T>> noiseGenerator) {
+        float biomeHalfTolerance = tolerance / 8F, biomeRadiusSq = borderRange * borderRange / 64F;
+
         // copied from net.minecraft.world.gen.layer.LayerUtil#build (func_237216_a_)
         IAreaFactory<T> main, ocean, river, biome, hill, result;
 
@@ -118,7 +122,7 @@ public final class Isle {
 
         // set to island
         // ======== START ========
-        biome = IsleFillLandOceanLayer.INSTANCE.apply(noiseGenerator.apply(500), biome);
+        biome = new IsleFillLandOceanLayer(biomeRadiusSq, biomeHalfTolerance).apply(noiseGenerator.apply(500), biome);
         // ========= END =========
 
         hill = LayerUtil.repeat(1000, ZoomLayer.NORMAL, river, 2, noiseGenerator);
@@ -146,16 +150,16 @@ public final class Isle {
 
         // filter oceans
         // ======== START ========
-        result = IsleFilterOceanLayer.INSTANCE.apply(noiseGenerator.apply(500), result);
+        result = new IsleFilterOceanLayer(biomeRadiusSq).apply(noiseGenerator.apply(500), result);
         // ========= END =========
 
         return result;
     }
 
-    private static float affectedRangeSq(float biomeCoordinate, int zoomFactor) {
+    private static float affectedRangeSq(float biomeCoordinate, int zoomFactor, float tolerance) {
         float zoomScale = 1 << zoomFactor, zoomed = 0.5F + biomeCoordinate * zoomScale;
-        float zoomedAffected = Math.abs(zoomed) + 0.5F * zoomScale;
-        return zoomedAffected * zoomedAffected;
+        float affected = Math.max(0, Math.abs(zoomed) + 0.5F * zoomScale + tolerance);
+        return affected * affected;
     }
 
     private static boolean isSimpleOcean(int i) {
@@ -172,41 +176,52 @@ public final class Isle {
 
     @MethodsReturnNonnullByDefault
     @ParametersAreNonnullByDefault
-    private enum IsleFillLandOceanLayer implements IAreaTransformer1, IDimOffset0Transformer {
-        INSTANCE;
+    private static final class IsleFillLandOceanLayer implements IAreaTransformer1, IDimOffset0Transformer {
+        private final float biomeRadiusSq;
+        private final float biomeHalfTolerance;
+
+        private IsleFillLandOceanLayer(float biomeRadiusSq, float biomeHalfTolerance) {
+            this.biomeRadiusSq = biomeRadiusSq;
+            this.biomeHalfTolerance = biomeHalfTolerance;
+        }
 
         @Override
         public int apply(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
-            float innerSq = (affectedRangeSq(x, 3) + affectedRangeSq(z, 3)) * (ISLE_SCALE_SQ / ISLE_TOLERANCE_SQ);
-            float outerSq = (affectedRangeSq(x, 3) + affectedRangeSq(z, 3)) * (ISLE_SCALE_SQ * ISLE_TOLERANCE_SQ);
+            float innerSq = (affectedRangeSq(x, 3, -this.biomeHalfTolerance) + affectedRangeSq(z, 3, -this.biomeHalfTolerance)) * ISLE_SCALE_SQ;
+            float outerSq = (affectedRangeSq(x, 3, this.biomeHalfTolerance) + affectedRangeSq(z, 3, this.biomeHalfTolerance)) * ISLE_SCALE_SQ;
             boolean holdsInner = true, holdsOuter = true;
             while (true) {
                 float r1 = (innerSq + outerSq) / 2, r2 = noiseGenerator.random(2) == 0 ? innerSq : outerSq;
                 if (!holdsInner) {
-                    int biome = area.getValue(this.getOffsetX(x), this.getOffsetZ(z));
-                    return isSimpleOcean(filterOcean(biome)) ? biome : 0;
+                    int currentBiome = area.getValue(this.getOffsetX(x), this.getOffsetZ(z));
+                    return isSimpleOcean(filterOcean(currentBiome)) ? currentBiome : 0;
                 }
                 if (!holdsOuter) {
-                    int biome = area.getValue(this.getOffsetX(x), this.getOffsetZ(z));
-                    return isSimpleOcean(filterOcean(biome)) ? 1 : biome;
+                    int currentBiome = area.getValue(this.getOffsetX(x), this.getOffsetZ(z));
+                    return isSimpleOcean(filterOcean(currentBiome)) ? 1 : currentBiome;
                 }
-                innerSq = Math.min(r1, r2); outerSq = Math.max(r1, r2);
-                holdsInner = innerSq < ISLE_BIOME_RADIUS_SQ;
-                holdsOuter = outerSq > ISLE_BIOME_RADIUS_SQ;
+                innerSq = Math.min(r1, r2);
+                outerSq = Math.max(r1, r2);
+                holdsInner = innerSq < this.biomeRadiusSq;
+                holdsOuter = outerSq > this.biomeRadiusSq;
             }
         }
     }
 
     @MethodsReturnNonnullByDefault
     @ParametersAreNonnullByDefault
-    private enum IsleFilterOceanLayer implements IAreaTransformer1, IDimOffset0Transformer {
-        INSTANCE;
+    private static final class IsleFilterOceanLayer implements IAreaTransformer1, IDimOffset0Transformer {
+        private final float biomeRadiusSq;
+
+        private IsleFilterOceanLayer(float biomeRadiusSq) {
+            this.biomeRadiusSq = biomeRadiusSq;
+        }
 
         @Override
         public int apply(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
-            int biome = area.getValue(this.getOffsetX(x), this.getOffsetZ(z));
-            float affectedRangeSq = Math.max(affectedRangeSq(x, 0), affectedRangeSq(z, 0));
-            return affectedRangeSq < ISLE_BIOME_RADIUS_SQ ? biome : this.oceanFiltered(biome);
+            int currentBiome = area.getValue(this.getOffsetX(x), this.getOffsetZ(z));
+            float affectedRangeSq = Math.max(affectedRangeSq(x, 0, 0), affectedRangeSq(z, 0, 0));
+            return affectedRangeSq < this.biomeRadiusSq ? currentBiome : this.oceanFiltered(currentBiome);
         }
 
         private int oceanFiltered(int biome) {
@@ -222,19 +237,25 @@ public final class Isle {
                 ObfuscationReflectionHelper.getPrivateValue(OverworldBiomeProvider.class, null, "field_226847_e_"));
 
         private static final Codec<IsleBiomeProvider> CODEC = RecordCodecBuilder.create(i -> i.group(
-                RegistryLookupCodec.getLookUpCodec(Registry.BIOME_KEY).forGetter(p -> p.reg),
-                Codec.LONG.fieldOf("seed").stable().forGetter(p -> p.seed))
+                        RegistryLookupCodec.getLookUpCodec(Registry.BIOME_KEY).forGetter(p -> p.reg),
+                        Codec.INT.fieldOf("tolerance").stable().forGetter(p -> p.isleTolerance),
+                        Codec.INT.fieldOf("border").stable().forGetter(p -> p.borderRange),
+                        Codec.LONG.fieldOf("seed").stable().forGetter(p -> p.seed))
                 .apply(i, i.stable(IsleBiomeProvider::new)));
 
         private final Registry<Biome> reg;
+        private final int isleTolerance;
+        private final int borderRange;
         private final Layer layer;
         private final long seed;
 
-        private IsleBiomeProvider(Registry<Biome> reg, long seed) {
+        private IsleBiomeProvider(Registry<Biome> reg, int tolerance, int borderRange, long seed) {
             super(BIOMES.stream().map(k -> () -> reg.getOrThrow(k)));
             this.reg = reg;
             this.seed = seed;
-            this.layer = new Layer(createAreaFactory(salt -> new LazyAreaLayerContext(25, seed, salt)));
+            this.isleTolerance = tolerance;
+            this.borderRange = borderRange;
+            this.layer = new Layer(createAreaFactory(tolerance, borderRange, salt -> new LazyAreaLayerContext(25, seed, salt)));
         }
 
         @Override
@@ -245,7 +266,7 @@ public final class Isle {
         @Override
         @OnlyIn(Dist.CLIENT)
         public BiomeProvider getBiomeProvider(long seed) {
-            return new IsleBiomeProvider(this.reg, seed);
+            return new IsleBiomeProvider(this.reg, this.isleTolerance, this.borderRange, seed);
         }
 
         @Override
