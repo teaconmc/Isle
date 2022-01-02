@@ -2,276 +2,178 @@ package org.teacon.isle;
 
 import com.google.gson.JsonObject;
 import com.mojang.serialization.Codec;
+import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
-import mcp.MethodsReturnNonnullByDefault;
-import net.minecraft.util.JSONUtils;
-import net.minecraft.util.RegistryKey;
-import net.minecraft.util.registry.Registry;
-import net.minecraft.util.registry.RegistryLookupCodec;
-import net.minecraft.world.biome.Biome;
-import net.minecraft.world.biome.provider.BiomeProvider;
-import net.minecraft.world.biome.provider.OverworldBiomeProvider;
-import net.minecraft.world.gen.ChunkGenerator;
-import net.minecraft.world.gen.DimensionSettings;
-import net.minecraft.world.gen.IExtendedNoiseRandom;
-import net.minecraft.world.gen.LazyAreaLayerContext;
-import net.minecraft.world.gen.NoiseChunkGenerator;
-import net.minecraft.world.gen.area.IArea;
-import net.minecraft.world.gen.area.IAreaFactory;
-import net.minecraft.world.gen.layer.AddBambooForestLayer;
-import net.minecraft.world.gen.layer.AddIslandLayer;
-import net.minecraft.world.gen.layer.AddMushroomIslandLayer;
-import net.minecraft.world.gen.layer.AddSnowLayer;
-import net.minecraft.world.gen.layer.BiomeLayer;
-import net.minecraft.world.gen.layer.DeepOceanLayer;
-import net.minecraft.world.gen.layer.EdgeBiomeLayer;
-import net.minecraft.world.gen.layer.EdgeLayer;
-import net.minecraft.world.gen.layer.HillsLayer;
-import net.minecraft.world.gen.layer.IslandLayer;
-import net.minecraft.world.gen.layer.Layer;
-import net.minecraft.world.gen.layer.LayerUtil;
-import net.minecraft.world.gen.layer.MixOceansLayer;
-import net.minecraft.world.gen.layer.MixRiverLayer;
-import net.minecraft.world.gen.layer.OceanLayer;
-import net.minecraft.world.gen.layer.RareBiomeLayer;
-import net.minecraft.world.gen.layer.RemoveTooMuchOceanLayer;
-import net.minecraft.world.gen.layer.RiverLayer;
-import net.minecraft.world.gen.layer.ShoreLayer;
-import net.minecraft.world.gen.layer.SmoothLayer;
-import net.minecraft.world.gen.layer.StartRiverLayer;
-import net.minecraft.world.gen.layer.ZoomLayer;
-import net.minecraft.world.gen.layer.traits.IAreaTransformer1;
-import net.minecraft.world.gen.layer.traits.IDimOffset0Transformer;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.api.distmarker.OnlyIn;
-import net.minecraftforge.common.world.ForgeWorldType;
+import it.unimi.dsi.fastutil.Pair;
+import net.minecraft.MethodsReturnNonnullByDefault;
+import net.minecraft.core.QuartPos;
+import net.minecraft.core.Registry;
+import net.minecraft.core.RegistryAccess;
+import net.minecraft.resources.RegistryLookupCodec;
+import net.minecraft.util.GsonHelper;
+import net.minecraft.util.Mth;
+import net.minecraft.world.level.biome.BiomeSource;
+import net.minecraft.world.level.biome.Climate;
+import net.minecraft.world.level.biome.MultiNoiseBiomeSource;
+import net.minecraft.world.level.biome.OverworldBiomeBuilder;
+import net.minecraft.world.level.chunk.ChunkGenerator;
+import net.minecraft.world.level.levelgen.*;
+import net.minecraft.world.level.levelgen.blending.Blender;
+import net.minecraft.world.level.levelgen.synth.NormalNoise;
+import net.minecraftforge.common.world.ForgeWorldPreset;
 import net.minecraftforge.event.RegistryEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.ExtensionPoint;
+import net.minecraftforge.fml.IExtensionPoint;
 import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.common.ObfuscationReflectionHelper;
-import net.minecraftforge.fml.network.FMLNetworkConstants;
-import org.apache.commons.lang3.tuple.Pair;
 
 import javax.annotation.ParametersAreNonnullByDefault;
-import java.util.List;
-import java.util.Objects;
-import java.util.function.LongFunction;
+import java.util.function.Supplier;
 
 @Mod("isle")
 @Mod.EventBusSubscriber(modid = "isle", bus = Mod.EventBusSubscriber.Bus.MOD)
 public final class Isle {
-    private static final float ISLE_SCALE_SQ = (float) Math.PI / 2F;
+    private static final double ISLE_SCALE_SQ = Math.PI / 2.0;
 
     public Isle() {
-        ModLoadingContext.get().registerExtensionPoint(ExtensionPoint.DISPLAYTEST, () -> Pair.of(
-                () -> FMLNetworkConstants.IGNORESERVERONLY, (serverVer, isDedicated) -> true));
+        ModLoadingContext.get().registerExtensionPoint(IExtensionPoint.DisplayTest.class,
+                () -> new IExtensionPoint.DisplayTest(() -> "ANY", (remote, isServer) -> true));
     }
 
     @SubscribeEvent
-    public static void levelType(RegistryEvent.Register<ForgeWorldType> event) {
+    public static void levelType(RegistryEvent.Register<ForgeWorldPreset> event) {
         // The corresponding forge registry is not provided so we can only do this.
-        Registry.register(Registry.BIOME_PROVIDER_CODEC, "isle:isle", IsleBiomeProvider.CODEC);
-        event.getRegistry().register(new ForgeWorldType(Isle::createChunkGen).setRegistryName("isle:isle"));
+        Registry.register(Registry.CHUNK_GENERATOR, "isle:isle_noise", IsleNoiseChunkGenerator.CODEC);
+        event.getRegistry().register(new ForgeWorldPreset(Isle::createChunkGen).setRegistryName("isle:isle"));
     }
 
-    private static ChunkGenerator createChunkGen(Registry<Biome> biomeReg, Registry<DimensionSettings> dimSettingsReg, long seed, String settingsString) {
-        JsonObject settings = settingsString.isEmpty() ? new JsonObject() : JSONUtils.fromJson(settingsString);
-        int tolerance = JSONUtils.getInt(settings, "tolerance", 16), borderRange = JSONUtils.getInt(settings, "border", 512);
-        return new NoiseChunkGenerator(new IsleBiomeProvider(biomeReg, tolerance, borderRange, seed), seed, () -> dimSettingsReg.getOrThrow(DimensionSettings.OVERWORLD));
+    private static ChunkGenerator createChunkGen(RegistryAccess access, long seed, String settingsString) {
+        var gen = access.registryOrThrow(Registry.NOISE_GENERATOR_SETTINGS_REGISTRY);
+        var noise = access.registryOrThrow(Registry.NOISE_REGISTRY);
+        var biome = access.registryOrThrow(Registry.BIOME_REGISTRY);
+
+        var settings = settingsString.isEmpty() ? new JsonObject() : GsonHelper.parse(settingsString);
+        var biomeSource = MultiNoiseBiomeSource.Preset.OVERWORLD.biomeSource(biome);
+        var config = new IsleConfig(
+                GsonHelper.getAsInt(settings, "border", 512),
+                GsonHelper.getAsInt(settings, "tolerance", 16),
+                () -> gen.getOrThrow(NoiseGeneratorSettings.OVERWORLD));
+
+        return new IsleNoiseChunkGenerator(noise, biomeSource, seed, config);
     }
 
-    private static <T extends IArea> IAreaFactory<T> createAreaFactory(int tolerance, int borderRange, LongFunction<? extends IExtendedNoiseRandom<T>> noiseGenerator) {
-        float biomeHalfTolerance = tolerance / 8F, biomeRadiusSq = borderRange * borderRange / 64F;
-
-        // copied from net.minecraft.world.gen.layer.LayerUtil#build (func_237216_a_)
-        IAreaFactory<T> main, ocean, river, biome, hill, result;
-
-        main = IslandLayer.INSTANCE.apply(noiseGenerator.apply(1));
-        main = ZoomLayer.FUZZY.apply(noiseGenerator.apply(2000), main);
-        main = AddIslandLayer.INSTANCE.apply(noiseGenerator.apply(1), main);
-        main = ZoomLayer.NORMAL.apply(noiseGenerator.apply(2001), main);
-        main = AddIslandLayer.INSTANCE.apply(noiseGenerator.apply(2), main);
-        main = AddIslandLayer.INSTANCE.apply(noiseGenerator.apply(50), main);
-        main = AddIslandLayer.INSTANCE.apply(noiseGenerator.apply(70), main);
-        main = RemoveTooMuchOceanLayer.INSTANCE.apply(noiseGenerator.apply(2), main);
-
-        ocean = OceanLayer.INSTANCE.apply(noiseGenerator.apply(2));
-        ocean = LayerUtil.repeat(2001, ZoomLayer.NORMAL, ocean, 6, noiseGenerator);
-
-        main = AddSnowLayer.INSTANCE.apply(noiseGenerator.apply(2), main);
-        main = AddIslandLayer.INSTANCE.apply(noiseGenerator.apply(3), main);
-        main = EdgeLayer.CoolWarm.INSTANCE.apply(noiseGenerator.apply(2), main);
-        main = EdgeLayer.HeatIce.INSTANCE.apply(noiseGenerator.apply(2), main);
-        main = EdgeLayer.Special.INSTANCE.apply(noiseGenerator.apply(3), main);
-        main = ZoomLayer.NORMAL.apply(noiseGenerator.apply(2002), main);
-        main = ZoomLayer.NORMAL.apply(noiseGenerator.apply(2003), main);
-        main = AddIslandLayer.INSTANCE.apply(noiseGenerator.apply(4), main);
-        main = AddMushroomIslandLayer.INSTANCE.apply(noiseGenerator.apply(5), main);
-        main = DeepOceanLayer.INSTANCE.apply(noiseGenerator.apply(4), main);
-        main = LayerUtil.repeat(1000, ZoomLayer.NORMAL, main, 0, noiseGenerator);
-
-        river = LayerUtil.repeat(1000, ZoomLayer.NORMAL, main, 0, noiseGenerator);
-        river = StartRiverLayer.INSTANCE.apply(noiseGenerator.apply(100), river);
-
-        biome = new BiomeLayer(false).apply(noiseGenerator.apply(200), main);
-        biome = AddBambooForestLayer.INSTANCE.apply(noiseGenerator.apply(1001), biome);
-        biome = LayerUtil.repeat(1000, ZoomLayer.NORMAL, biome, 2, noiseGenerator);
-        biome = EdgeBiomeLayer.INSTANCE.apply(noiseGenerator.apply(1000), biome);
-
-        // set to island
-        // ======== START ========
-        biome = new IsleFillLandOceanLayer(biomeRadiusSq, biomeHalfTolerance).apply(noiseGenerator.apply(500), biome);
-        // ========= END =========
-
-        hill = LayerUtil.repeat(1000, ZoomLayer.NORMAL, river, 2, noiseGenerator);
-        biome = HillsLayer.INSTANCE.apply(noiseGenerator.apply(1000), biome, hill);
-
-        river = LayerUtil.repeat(1000, ZoomLayer.NORMAL, river, 2, noiseGenerator);
-        river = LayerUtil.repeat(1000, ZoomLayer.NORMAL, river, 4, noiseGenerator);
-        river = RiverLayer.INSTANCE.apply(noiseGenerator.apply(1), river);
-        river = SmoothLayer.INSTANCE.apply(noiseGenerator.apply(1000), river);
-
-        biome = RareBiomeLayer.INSTANCE.apply(noiseGenerator.apply(1001), biome);
-
-        // zoom only three times (vanilla: four times)
-        biome = ZoomLayer.NORMAL.apply(noiseGenerator.apply(1000), biome);
-        biome = AddIslandLayer.INSTANCE.apply(noiseGenerator.apply(3), biome);
-        biome = ZoomLayer.NORMAL.apply(noiseGenerator.apply(1001), biome);
-        biome = ShoreLayer.INSTANCE.apply(noiseGenerator.apply(1000), biome);
-        biome = ZoomLayer.NORMAL.apply(noiseGenerator.apply(1002), biome);
-        /* biome = ZoomLayer.NORMAL.apply(noiseGenerator.apply(1003), biome); */
-
-        biome = SmoothLayer.INSTANCE.apply(noiseGenerator.apply(1000), biome);
-        biome = MixRiverLayer.INSTANCE.apply(noiseGenerator.apply(100), biome, river);
-
-        result = MixOceansLayer.INSTANCE.apply(noiseGenerator.apply(100), biome, ocean);
-
-        // filter oceans
-        // ======== START ========
-        result = new IsleFilterOceanLayer(biomeRadiusSq).apply(noiseGenerator.apply(500), result);
-        // ========= END =========
-
-        return result;
-    }
-
-    private static float affectedRangeSq(float biomeCoordinate, int zoomFactor, float tolerance) {
-        float zoomScale = 1 << zoomFactor, zoomed = 0.5F + biomeCoordinate * zoomScale;
-        float affected = Math.max(0, Math.abs(zoomed) + 0.5F * zoomScale + tolerance);
+    private static double affectedRangeSq(double biomeCoordinate, double tolerance) {
+        var affected = Math.max(0, Math.abs(0.5 + biomeCoordinate) + tolerance);
         return affected * affected;
     }
 
-    private static boolean isSimpleOcean(int i) {
-        return i == 0 || i == 24 || i == 45 || i == 46 || i == 48 || i == 49;
-    }
-
-    private static int filterOcean(int i) {
-        if (i == 10) return 46; // frozen => cold, drop spikes
-        if (i == 50) return 49; // deep frozen => deep cold, drop spikes
-        if (i == 44) return 45; // warm => luke warm, drop corals
-        if (i == 47) return 48; // deep warm => deep luke warm, drop corals
-        return i;
-    }
-
     @MethodsReturnNonnullByDefault
     @ParametersAreNonnullByDefault
-    private static final class IsleFillLandOceanLayer implements IAreaTransformer1, IDimOffset0Transformer {
+    private static final class IsleNoiseSampler extends NoiseSampler {
+        private static final OverworldBiomeBuilder OVERWORLD_BIOME_BUILDER = new OverworldBiomeBuilder();
+
+        private static final Climate.Parameter[] ORIGINAL_TEMPERATURES = OVERWORLD_BIOME_BUILDER.temperatures;
+        private static final Climate.Parameter ORIGINAL_COAST_CONTINENTALNESS = OVERWORLD_BIOME_BUILDER.coastContinentalness;
+        private static final Climate.Parameter ORIGINAL_OCEAN_CONTINENTALNESS = OVERWORLD_BIOME_BUILDER.oceanContinentalness;
+        private static final Climate.Parameter ORIGINAL_FAR_INLAND_CONTINENTALNESS = OVERWORLD_BIOME_BUILDER.farInlandContinentalness;
+        private static final Climate.Parameter ORIGINAL_DEEP_OCEAN_CONTINENTALNESS = OVERWORLD_BIOME_BUILDER.deepOceanContinentalness;
+
+        private static final Climate.Parameter LAND_CONTINENTALNESS = Climate.Parameter.span(ORIGINAL_COAST_CONTINENTALNESS, ORIGINAL_FAR_INLAND_CONTINENTALNESS);
+        private static final Climate.Parameter OCEAN_CONTINENTALNESS = Climate.Parameter.span(ORIGINAL_DEEP_OCEAN_CONTINENTALNESS, ORIGINAL_OCEAN_CONTINENTALNESS);
+        private static final Climate.Parameter NORMAL_TEMPERATURE = Climate.Parameter.span(ORIGINAL_TEMPERATURES[1], ORIGINAL_TEMPERATURES[ORIGINAL_TEMPERATURES.length - 2]);
+
         private final float biomeRadiusSq;
         private final float biomeHalfTolerance;
 
-        private IsleFillLandOceanLayer(float biomeRadiusSq, float biomeHalfTolerance) {
-            this.biomeRadiusSq = biomeRadiusSq;
+        public IsleNoiseSampler(NoiseSettings settings, boolean isNoiseCavesEnabled, long seed, Registry<NormalNoise.NoiseParameters> registry, WorldgenRandom.Algorithm algorithm, float biomeHalfTolerance, float biomeRadiusSq) {
+            super(settings, isNoiseCavesEnabled, seed, registry, algorithm);
             this.biomeHalfTolerance = biomeHalfTolerance;
-        }
-
-        @Override
-        public int apply(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
-            float innerSq = (affectedRangeSq(x, 3, -this.biomeHalfTolerance) + affectedRangeSq(z, 3, -this.biomeHalfTolerance)) * ISLE_SCALE_SQ;
-            float outerSq = (affectedRangeSq(x, 3, this.biomeHalfTolerance) + affectedRangeSq(z, 3, this.biomeHalfTolerance)) * ISLE_SCALE_SQ;
-            boolean holdsInner = true, holdsOuter = true;
-            while (true) {
-                float r1 = (innerSq + outerSq) / 2, r2 = noiseGenerator.random(2) == 0 ? innerSq : outerSq;
-                if (!holdsInner) {
-                    int currentBiome = area.getValue(this.getOffsetX(x), this.getOffsetZ(z));
-                    return isSimpleOcean(filterOcean(currentBiome)) ? currentBiome : 0;
-                }
-                if (!holdsOuter) {
-                    int currentBiome = area.getValue(this.getOffsetX(x), this.getOffsetZ(z));
-                    return isSimpleOcean(filterOcean(currentBiome)) ? 1 : currentBiome;
-                }
-                innerSq = Math.min(r1, r2);
-                outerSq = Math.max(r1, r2);
-                holdsInner = innerSq < this.biomeRadiusSq;
-                holdsOuter = outerSq > this.biomeRadiusSq;
-            }
-        }
-    }
-
-    @MethodsReturnNonnullByDefault
-    @ParametersAreNonnullByDefault
-    private static final class IsleFilterOceanLayer implements IAreaTransformer1, IDimOffset0Transformer {
-        private final float biomeRadiusSq;
-
-        private IsleFilterOceanLayer(float biomeRadiusSq) {
             this.biomeRadiusSq = biomeRadiusSq;
         }
 
-        @Override
-        public int apply(IExtendedNoiseRandom<?> noiseGenerator, IArea area, int x, int z) {
-            int currentBiome = area.getValue(this.getOffsetX(x), this.getOffsetZ(z));
-            float affectedRangeSq = Math.max(affectedRangeSq(x, 0, 0), affectedRangeSq(z, 0, 0));
-            return affectedRangeSq < this.biomeRadiusSq ? currentBiome : this.oceanFiltered(currentBiome);
+        private long clampByReflection(long value, long start, long end) {
+            var step = end - start;
+            var offset = Math.floorMod(value - start, 2 * step);
+            return offset >= step ? end + step - offset : start + offset;
         }
 
-        private int oceanFiltered(int biome) {
-            int filtered = filterOcean(biome);
-            return isSimpleOcean(filtered) ? filtered : 24;
+        private long clampSmoothly(long value, long start, long end) {
+            var middle = (start + end) / 2.0;
+            var factorExp = Math.exp(Mth.inverseLerp(value, middle, end));
+            return Math.round(Mth.lerp((factorExp - 1) / (factorExp + 1), middle, end));
+        }
+
+        private long clamp(long value, long start, long end) {
+            var factor = Mth.inverseLerp((double) value, OCEAN_CONTINENTALNESS.min(), LAND_CONTINENTALNESS.max());
+            return Math.round(Mth.clampedLerp(start, end, factor));
+        }
+
+        @Override
+        public FlatNoiseData noiseData(int biomeX, int biomeZ, Blender blender) {
+            var noiseX = (biomeX + this.getOffset(biomeX, 0, biomeZ)) * 2.0;
+            var noiseZ = (biomeZ + this.getOffset(biomeZ, biomeX, 0)) * 2.0;
+
+            var oldContinentalness = (float) this.getContinentalness(noiseX * 4.0D, 0.0D, noiseZ * 4.0D);
+            var weirdness = (float) this.getWeirdness(noiseX, 0.0D, noiseZ);
+            var erosion = (float) this.getErosion(noiseX, 0.0D, noiseZ);
+
+            var outerSq = (affectedRangeSq(biomeX, this.biomeHalfTolerance) + affectedRangeSq(biomeZ, this.biomeHalfTolerance)) * ISLE_SCALE_SQ;
+            var innerSq = (affectedRangeSq(biomeX, -this.biomeHalfTolerance) + affectedRangeSq(biomeZ, -this.biomeHalfTolerance)) * ISLE_SCALE_SQ;
+
+            var firstBaseline = (OCEAN_CONTINENTALNESS.max() + LAND_CONTINENTALNESS.min()) / 2.0;
+            var secondBaseline = Mth.clampedMap(this.biomeRadiusSq, innerSq, outerSq, OCEAN_CONTINENTALNESS.min(), LAND_CONTINENTALNESS.max());
+            var offset = Mth.clampedMap(Climate.quantizeCoord(oldContinentalness), OCEAN_CONTINENTALNESS.min(), LAND_CONTINENTALNESS.max(), firstBaseline, secondBaseline);
+
+            var continentalness = Climate.unquantizeCoord(Math.round(offset));
+            var terrainInfo = this.terrainInfo(QuartPos.toBlock(biomeX), QuartPos.toBlock(biomeZ), continentalness, weirdness, erosion, blender);
+
+            return new FlatNoiseData(noiseX, noiseZ, continentalness, weirdness, erosion, terrainInfo);
+        }
+
+        @Override
+        protected double getTemperature(double biomeX, double biomeY, double biomeZ) {
+            var original = Climate.quantizeCoord((float) super.getTemperature(biomeX, biomeY, biomeZ));
+            if (Math.max(affectedRangeSq(biomeX, 0), affectedRangeSq(biomeZ, 0)) >= biomeRadiusSq) {
+                return Climate.unquantizeCoord(Mth.clamp(original, NORMAL_TEMPERATURE.min(), NORMAL_TEMPERATURE.max()));
+            }
+            return Climate.unquantizeCoord(original);
         }
     }
 
     @MethodsReturnNonnullByDefault
     @ParametersAreNonnullByDefault
-    private static final class IsleBiomeProvider extends BiomeProvider {
-        private static final List<RegistryKey<Biome>> BIOMES = Objects.requireNonNull(
-                ObfuscationReflectionHelper.getPrivateValue(OverworldBiomeProvider.class, null, "field_226847_e_"));
+    private static final class IsleNoiseChunkGenerator extends NoiseBasedChunkGenerator {
+        public static final Codec<IsleNoiseChunkGenerator> CODEC = RecordCodecBuilder.create(i -> i.group(
+                        RegistryLookupCodec.create(Registry.NOISE_REGISTRY).forGetter(g -> g.noises),
+                        BiomeSource.CODEC.fieldOf("biome_source").forGetter(g -> g.biomeSource),
+                        Codec.LONG.fieldOf("seed").stable().forGetter(g -> g.seed),
+                        IsleConfig.CODEC.fieldOf("settings").forGetter(g -> g.config))
+                .apply(i, i.stable(IsleNoiseChunkGenerator::new)));
 
-        private static final Codec<IsleBiomeProvider> CODEC = RecordCodecBuilder.create(i -> i.group(
-                        RegistryLookupCodec.getLookUpCodec(Registry.BIOME_KEY).forGetter(p -> p.reg),
-                        Codec.INT.fieldOf("tolerance").stable().forGetter(p -> p.isleTolerance),
-                        Codec.INT.fieldOf("border").stable().forGetter(p -> p.borderRange),
-                        Codec.LONG.fieldOf("seed").stable().forGetter(p -> p.seed))
-                .apply(i, i.stable(IsleBiomeProvider::new)));
+        private final IsleConfig config;
 
-        private final Registry<Biome> reg;
-        private final int isleTolerance;
-        private final int borderRange;
-        private final Layer layer;
-        private final long seed;
-
-        private IsleBiomeProvider(Registry<Biome> reg, int tolerance, int borderRange, long seed) {
-            super(BIOMES.stream().map(k -> () -> reg.getOrThrow(k)));
-            this.reg = reg;
-            this.seed = seed;
-            this.isleTolerance = tolerance;
-            this.borderRange = borderRange;
-            this.layer = new Layer(createAreaFactory(tolerance, borderRange, salt -> new LazyAreaLayerContext(25, seed, salt)));
+        public IsleNoiseChunkGenerator(Registry<NormalNoise.NoiseParameters> reg, BiomeSource source, long seed, IsleConfig config) {
+            super(reg, source, seed, config.noiseSettings);
+            this.config = config;
+            var settings = config.noiseSettings.get();
+            this.sampler = new IsleNoiseSampler(settings.noiseSettings(),
+                    settings.isNoiseCavesEnabled(), seed, reg, settings.getRandomSource(),
+                    config.tolerance / 8F, config.borderRange * config.borderRange / 64F);
         }
 
         @Override
-        protected Codec<? extends BiomeProvider> getBiomeProviderCodec() {
+        protected Codec<? extends ChunkGenerator> codec() {
             return CODEC;
         }
+    }
 
-        @Override
-        @OnlyIn(Dist.CLIENT)
-        public BiomeProvider getBiomeProvider(long seed) {
-            return new IsleBiomeProvider(this.reg, this.isleTolerance, this.borderRange, seed);
-        }
-
-        @Override
-        public Biome getNoiseBiome(int x, int y, int z) {
-            return this.layer.func_242936_a(this.reg, x, z);
-        }
+    @MethodsReturnNonnullByDefault
+    @ParametersAreNonnullByDefault
+    private record IsleConfig(int borderRange, int tolerance, Supplier<NoiseGeneratorSettings> noiseSettings) {
+        public static final MapCodec<IsleConfig> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+                        Codec.INT.fieldOf("border").stable().forGetter(IsleConfig::borderRange),
+                        Codec.INT.fieldOf("tolerance").stable().forGetter(IsleConfig::tolerance),
+                        NoiseGeneratorSettings.CODEC.fieldOf("noise_settings").forGetter(IsleConfig::noiseSettings))
+                .apply(i, i.stable(IsleConfig::new)));
     }
 }

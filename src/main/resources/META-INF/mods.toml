@@ -1,5 +1,5 @@
 modLoader="javafml"
-loaderVersion="[35,)"
+loaderVersion="[39,)"
 license="BSD-3-Clause"
 
 [[mods]]
@@ -14,6 +14,6 @@ description="Generate a big lonely island"
 modId="forge"
 mandatory=true
 # With Forge PR #7521
-versionRange="[35.1.6,)"
+versionRange="[39,)"
 ordering="NONE"
 side="BOTH"
