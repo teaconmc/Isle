@@ -4,12 +4,15 @@ import com.google.gson.JsonObject;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
-import it.unimi.dsi.fastutil.Pair;
 import net.minecraft.MethodsReturnNonnullByDefault;
+import net.minecraft.client.Minecraft;
 import net.minecraft.core.QuartPos;
 import net.minecraft.core.Registry;
 import net.minecraft.core.RegistryAccess;
+import net.minecraft.data.BuiltinRegistries;
 import net.minecraft.resources.RegistryLookupCodec;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.GsonHelper;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.biome.BiomeSource;
@@ -17,17 +20,28 @@ import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.biome.MultiNoiseBiomeSource;
 import net.minecraft.world.level.biome.OverworldBiomeBuilder;
 import net.minecraft.world.level.chunk.ChunkGenerator;
-import net.minecraft.world.level.levelgen.*;
+import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
+import net.minecraft.world.level.levelgen.NoiseGeneratorSettings;
+import net.minecraft.world.level.levelgen.NoiseSampler;
+import net.minecraft.world.level.levelgen.NoiseSettings;
+import net.minecraft.world.level.levelgen.Noises;
+import net.minecraft.world.level.levelgen.WorldgenRandom;
 import net.minecraft.world.level.levelgen.blending.Blender;
 import net.minecraft.world.level.levelgen.synth.NormalNoise;
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.api.distmarker.OnlyIn;
+import net.minecraftforge.client.event.RenderGameOverlayEvent;
+import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.world.ForgeWorldPreset;
 import net.minecraftforge.event.RegistryEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.fml.DistExecutor;
 import net.minecraftforge.fml.IExtensionPoint;
 import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.common.Mod;
 
 import javax.annotation.ParametersAreNonnullByDefault;
+import java.text.DecimalFormat;
 import java.util.function.Supplier;
 
 @Mod("isle")
@@ -38,12 +52,15 @@ public final class Isle {
     public Isle() {
         ModLoadingContext.get().registerExtensionPoint(IExtensionPoint.DisplayTest.class,
                 () -> new IExtensionPoint.DisplayTest(() -> "ANY", (remote, isServer) -> true));
+        DistExecutor.unsafeRunWhenOn(Dist.CLIENT,
+                () -> () -> MinecraftForge.EVENT_BUS.addListener(IsleNoiseSampler::addDebugInfo));
     }
 
     @SubscribeEvent
     public static void levelType(RegistryEvent.Register<ForgeWorldPreset> event) {
-        // The corresponding forge registry is not provided so we can only do this.
+        // The corresponding forge registries are not provided so we can only do this.
         Registry.register(Registry.CHUNK_GENERATOR, "isle:isle_noise", IsleNoiseChunkGenerator.CODEC);
+        Registry.register(BuiltinRegistries.NOISE, IsleNoiseSampler.NOISE_KEY, IsleNoiseSampler.NOISE);
         event.getRegistry().register(new ForgeWorldPreset(Isle::createChunkGen).setRegistryName("isle:isle"));
     }
 
@@ -70,73 +87,176 @@ public final class Isle {
     @MethodsReturnNonnullByDefault
     @ParametersAreNonnullByDefault
     private static final class IsleNoiseSampler extends NoiseSampler {
-        private static final OverworldBiomeBuilder OVERWORLD_BIOME_BUILDER = new OverworldBiomeBuilder();
+        private static final OverworldBiomeBuilder OVERWORLD_BIOME_BUILDER;
 
-        private static final Climate.Parameter[] ORIGINAL_TEMPERATURES = OVERWORLD_BIOME_BUILDER.temperatures;
-        private static final Climate.Parameter ORIGINAL_COAST_CONTINENTALNESS = OVERWORLD_BIOME_BUILDER.coastContinentalness;
-        private static final Climate.Parameter ORIGINAL_OCEAN_CONTINENTALNESS = OVERWORLD_BIOME_BUILDER.oceanContinentalness;
-        private static final Climate.Parameter ORIGINAL_FAR_INLAND_CONTINENTALNESS = OVERWORLD_BIOME_BUILDER.farInlandContinentalness;
-        private static final Climate.Parameter ORIGINAL_DEEP_OCEAN_CONTINENTALNESS = OVERWORLD_BIOME_BUILDER.deepOceanContinentalness;
+        private static final Climate.Parameter[] TEMPERATURES;
+        private static final Climate.Parameter NORMAL_TEMPERATURE;
 
-        private static final Climate.Parameter LAND_CONTINENTALNESS = Climate.Parameter.span(ORIGINAL_COAST_CONTINENTALNESS, ORIGINAL_FAR_INLAND_CONTINENTALNESS);
-        private static final Climate.Parameter OCEAN_CONTINENTALNESS = Climate.Parameter.span(ORIGINAL_DEEP_OCEAN_CONTINENTALNESS, ORIGINAL_OCEAN_CONTINENTALNESS);
-        private static final Climate.Parameter NORMAL_TEMPERATURE = Climate.Parameter.span(ORIGINAL_TEMPERATURES[1], ORIGINAL_TEMPERATURES[ORIGINAL_TEMPERATURES.length - 2]);
+        private static final Climate.Parameter COAST_CONTINENTALNESS;
+        private static final Climate.Parameter OCEAN_CONTINENTALNESS;
+        private static final Climate.Parameter FAR_INLAND_CONTINENTALNESS;
+        private static final Climate.Parameter DEEP_OCEAN_CONTINENTALNESS;
 
+        private static final NormalNoise.NoiseParameters NOISE;
+        private static final ResourceKey<NormalNoise.NoiseParameters> NOISE_KEY;
+
+        static {
+            OVERWORLD_BIOME_BUILDER = new OverworldBiomeBuilder();
+
+            TEMPERATURES = OVERWORLD_BIOME_BUILDER.temperatures;
+            NORMAL_TEMPERATURE = Climate.Parameter.span(TEMPERATURES[1], TEMPERATURES[TEMPERATURES.length - 2]);
+
+            COAST_CONTINENTALNESS = OVERWORLD_BIOME_BUILDER.coastContinentalness;
+            OCEAN_CONTINENTALNESS = OVERWORLD_BIOME_BUILDER.oceanContinentalness;
+            FAR_INLAND_CONTINENTALNESS = OVERWORLD_BIOME_BUILDER.farInlandContinentalness;
+            DEEP_OCEAN_CONTINENTALNESS = OVERWORLD_BIOME_BUILDER.deepOceanContinentalness;
+
+            NOISE = new NormalNoise.NoiseParameters(-5, 1.0, 2.0, 1.0, 1.0, 1.0, 0.0);
+            NOISE_KEY = ResourceKey.create(Registry.NOISE_REGISTRY, new ResourceLocation("isle:isle_noise"));
+        }
+
+        private final NormalNoise noise;
         private final float biomeRadiusSq;
         private final float biomeHalfTolerance;
 
-        public IsleNoiseSampler(NoiseSettings settings, boolean isNoiseCavesEnabled, long seed, Registry<NormalNoise.NoiseParameters> registry, WorldgenRandom.Algorithm algorithm, float biomeHalfTolerance, float biomeRadiusSq) {
+        private final ThreadLocal<Cached> cachedThreadLocal = new ThreadLocal<>();
+
+        public IsleNoiseSampler(NoiseSettings settings, boolean isNoiseCavesEnabled,
+                                long seed, Registry<NormalNoise.NoiseParameters> registry,
+                                WorldgenRandom.Algorithm algorithm, float biomeHalfTolerance, float biomeRadiusSq) {
             super(settings, isNoiseCavesEnabled, seed, registry, algorithm);
+            var positionRandomFactory = algorithm.newInstance(seed).forkPositional();
+            this.noise = Noises.instantiate(registry, positionRandomFactory, NOISE_KEY);
             this.biomeHalfTolerance = biomeHalfTolerance;
             this.biomeRadiusSq = biomeRadiusSq;
         }
 
-        private long clampByReflection(long value, long start, long end) {
-            var step = end - start;
-            var offset = Math.floorMod(value - start, 2 * step);
-            return offset >= step ? end + step - offset : start + offset;
-        }
-
-        private long clampSmoothly(long value, long start, long end) {
-            var middle = (start + end) / 2.0;
-            var factorExp = Math.exp(Mth.inverseLerp(value, middle, end));
-            return Math.round(Mth.lerp((factorExp - 1) / (factorExp + 1), middle, end));
-        }
-
-        private long clamp(long value, long start, long end) {
-            var factor = Mth.inverseLerp((double) value, OCEAN_CONTINENTALNESS.min(), LAND_CONTINENTALNESS.max());
-            return Math.round(Mth.clampedLerp(start, end, factor));
+        private static double trigMap(double input, double center, double ref, double bound) {
+            // trigMap(0.5, ...) => center;
+            // trigMap(0.0, ...), trigMap(1.0, ...) => ref;
+            // trigMap(-Inf, ...), trigMap(+Inf, ...) => bound;
+            var f = Math.acos(1 - 2 * Mth.inverseLerp(ref, center, bound));
+            return Mth.lerp((1 - Math.cos(Mth.clamp((1 - 2 * input) * f, -Math.PI, Math.PI))) / 2, center, bound);
         }
 
         @Override
         public FlatNoiseData noiseData(int biomeX, int biomeZ, Blender blender) {
-            var noiseX = (biomeX + this.getOffset(biomeX, 0, biomeZ)) * 2.0;
-            var noiseZ = (biomeZ + this.getOffset(biomeZ, biomeX, 0)) * 2.0;
+            var noiseX = (biomeX + this.getOffset(biomeX, 0, biomeZ));
+            var noiseZ = (biomeZ + this.getOffset(biomeZ, biomeX, 0));
 
-            var oldContinentalness = (float) this.getContinentalness(noiseX * 4.0D, 0.0D, noiseZ * 4.0D);
-            var weirdness = (float) this.getWeirdness(noiseX, 0.0D, noiseZ);
-            var erosion = (float) this.getErosion(noiseX, 0.0D, noiseZ);
+            var continentalness = this.getContinentalness(noiseX * 2.0, 0.0, noiseZ * 2.0);
+            var weirdness = this.getWeirdness(noiseX * 2.0, 0.0, noiseZ * 2.0);
+            var erosion = this.getErosion(noiseX * 2.0, 0.0, noiseZ * 2.0);
 
-            var outerSq = (affectedRangeSq(biomeX, this.biomeHalfTolerance) + affectedRangeSq(biomeZ, this.biomeHalfTolerance)) * ISLE_SCALE_SQ;
-            var innerSq = (affectedRangeSq(biomeX, -this.biomeHalfTolerance) + affectedRangeSq(biomeZ, -this.biomeHalfTolerance)) * ISLE_SCALE_SQ;
+            var factors = this.getCachedFactors(biomeX, biomeZ);
+            var factor = (factors.factorCircle + factors.continentalOffset + 0.5) / 2.0;
 
-            var firstBaseline = (OCEAN_CONTINENTALNESS.max() + LAND_CONTINENTALNESS.min()) / 2.0;
-            var secondBaseline = Mth.clampedMap(this.biomeRadiusSq, innerSq, outerSq, OCEAN_CONTINENTALNESS.min(), LAND_CONTINENTALNESS.max());
-            var offset = Mth.clampedMap(Climate.quantizeCoord(oldContinentalness), OCEAN_CONTINENTALNESS.min(), LAND_CONTINENTALNESS.max(), firstBaseline, secondBaseline);
+            var landMin = (COAST_CONTINENTALNESS.min() + COAST_CONTINENTALNESS.max()) / 2.0;
+            var oceanMax = (OCEAN_CONTINENTALNESS.min() + OCEAN_CONTINENTALNESS.max()) / 2.0;
 
-            var continentalness = Climate.unquantizeCoord(Math.round(offset));
-            var terrainInfo = this.terrainInfo(QuartPos.toBlock(biomeX), QuartPos.toBlock(biomeZ), continentalness, weirdness, erosion, blender);
+            var refMinMax = Mth.lerp(factor, oceanMax, landMin);
 
-            return new FlatNoiseData(noiseX, noiseZ, continentalness, weirdness, erosion, terrainInfo);
+            var landMin2 = (COAST_CONTINENTALNESS.min() + 3.0 * COAST_CONTINENTALNESS.max()) / 4.0;
+            var oceanMax2 = (3.0 * OCEAN_CONTINENTALNESS.min() + OCEAN_CONTINENTALNESS.max()) / 4.0;
+
+            var clampedMin = Mth.clamp(refMinMax, DEEP_OCEAN_CONTINENTALNESS.min(), landMin2);
+            var clampedMax = Mth.clamp(refMinMax, oceanMax2, FAR_INLAND_CONTINENTALNESS.max());
+
+            var newWeirdness = (float) Mth.clampedMap(weirdness, -1.0, 1.0,
+                    trigMap(factor, 0.0, -0.25, -1.0), trigMap(factor, 0.0, 0.25, 1.0));
+            var newErosion = (float) Mth.clampedMap(erosion, -1.0, 1.0,
+                    trigMap(factor, 0.8, 0.6, 0.0), 1.0);
+            var newContinentalness = Climate.unquantizeCoord(Math.round(
+                    Mth.clampedMap(Climate.quantizeCoord((float) continentalness),
+                            OCEAN_CONTINENTALNESS.min(), FAR_INLAND_CONTINENTALNESS.max(), clampedMin, clampedMax)));
+
+            var blockX = QuartPos.toBlock(biomeX);
+            var blockZ = QuartPos.toBlock(biomeZ);
+            var info = this.terrainInfo(blockX, blockZ,
+                    newContinentalness, newWeirdness, (float) erosion, blender);
+
+            return new FlatNoiseData(noiseX, noiseZ, newContinentalness, newWeirdness, newErosion, info);
         }
 
         @Override
-        protected double getTemperature(double biomeX, double biomeY, double biomeZ) {
-            var original = Climate.quantizeCoord((float) super.getTemperature(biomeX, biomeY, biomeZ));
-            if (Math.max(affectedRangeSq(biomeX, 0), affectedRangeSq(biomeZ, 0)) >= biomeRadiusSq) {
-                return Climate.unquantizeCoord(Mth.clamp(original, NORMAL_TEMPERATURE.min(), NORMAL_TEMPERATURE.max()));
+        public Climate.TargetPoint target(int biomeX, int biomeY, int biomeZ, FlatNoiseData data) {
+            var noiseX = data.shiftedX();
+            var noiseY = biomeY + this.getOffset(biomeY, biomeZ, biomeX);
+            var noiseZ = data.shiftedZ();
+
+            var depth = this.computeBaseDensity(QuartPos.toBlock(biomeY), data.terrainInfo());
+            var temperature = this.getTemperature(noiseX * 2.0, noiseY, noiseZ * 2.0);
+
+            var factors = this.getCachedFactors(biomeX, biomeZ);
+            var factor = (factors.factorCircle + factors.continentalOffset + 0.5) / 2.0;
+
+            var newTemperature = (float) Mth.clampedMap(temperature, -1.0, 1.0,
+                    trigMap(factor, 0.0, -0.075, -1.0), trigMap(factor, 0.0, 0.075, 1.0));
+            if (factors.factorSquare <= 0) {
+                newTemperature = Climate.unquantizeCoord(Mth.clamp(
+                        Climate.quantizeCoord(newTemperature), NORMAL_TEMPERATURE.min(), NORMAL_TEMPERATURE.max()));
             }
-            return Climate.unquantizeCoord(original);
+
+            var humidity = this.getHumidity(noiseX * 2.0, noiseY, noiseZ * 2.0);
+            var continentalness = data.continentalness();
+            var weirdness = data.weirdness();
+            var erosion = data.erosion();
+
+            return Climate.target(newTemperature, (float) humidity,
+                    (float) continentalness, (float) erosion, (float) depth, (float) weirdness);
+        }
+
+        @OnlyIn(Dist.CLIENT)
+        private static void addDebugInfo(RenderGameOverlayEvent.Text event) {
+            var mc = Minecraft.getInstance();
+            var cameraEntity = mc.getCameraEntity();
+            var server = mc.getSingleplayerServer();
+            if (mc.options.renderDebug && server != null && cameraEntity != null) {
+                var world = server.getLevel(cameraEntity.level.dimension());
+                if (world != null) {
+                    var sampler = world.getChunkSource().getGenerator().climateSampler();
+                    if (sampler instanceof IsleNoiseSampler current) {
+                        var biomeX = QuartPos.fromBlock(cameraEntity.getBlockX());
+                        var biomeZ = QuartPos.fromBlock(cameraEntity.getBlockZ());
+                        var factors = current.getCachedFactors(biomeX, biomeZ);
+
+                        var f = new DecimalFormat("0.000");
+                        var left = event.getLeft();
+
+                        left.add("");
+                        left.add("TeaCon Isle" +
+                                " FC: " + f.format(factors.factorCircle) +
+                                " FSQ: " + f.format(factors.factorSquare) +
+                                " CO: " + f.format(factors.continentalOffset) +
+                                " CF: " + f.format((factors.factorCircle + factors.continentalOffset + 0.5) / 2.0));
+                    }
+                }
+            }
+        }
+
+        private Cached getCachedFactors(int biomeX, int biomeZ) {
+            var result = this.cachedThreadLocal.get();
+            if (result == null || result.biomeX != biomeX || result.biomeZ != biomeZ) {
+                result = Cached.from(biomeX, biomeZ, this);
+                this.cachedThreadLocal.set(result);
+            }
+            return result;
+        }
+
+        private record Cached(int biomeX, int biomeZ,
+                              double continentalOffset, double factorCircle, double factorSquare) {
+            private static Cached from(int biomeX, int biomeZ, IsleNoiseSampler parent) {
+                var halfTol = parent.biomeHalfTolerance;
+                var radiusSq = parent.biomeRadiusSq;
+
+                var innerSq = (affectedRangeSq(biomeX, -halfTol) + affectedRangeSq(biomeZ, -halfTol)) * ISLE_SCALE_SQ;
+                var outerSq = (affectedRangeSq(biomeX, halfTol) + affectedRangeSq(biomeZ, halfTol)) * ISLE_SCALE_SQ;
+                var maxSq = Math.max(affectedRangeSq(biomeX, 0), affectedRangeSq(biomeZ, 0));
+                var offset = parent.noise.getValue(biomeX, biomeZ, 0.0);
+
+                return new Cached(biomeX, biomeZ,
+                        offset, Mth.inverseLerp(radiusSq, innerSq, outerSq), 1 - maxSq / radiusSq);
+            }
         }
     }
 
@@ -152,13 +272,14 @@ public final class Isle {
 
         private final IsleConfig config;
 
-        public IsleNoiseChunkGenerator(Registry<NormalNoise.NoiseParameters> reg, BiomeSource source, long seed, IsleConfig config) {
+        public IsleNoiseChunkGenerator(Registry<NormalNoise.NoiseParameters> reg,
+                                       BiomeSource source, long seed, IsleConfig config) {
             super(reg, source, seed, config.noiseSettings);
             this.config = config;
             var settings = config.noiseSettings.get();
             this.sampler = new IsleNoiseSampler(settings.noiseSettings(),
                     settings.isNoiseCavesEnabled(), seed, reg, settings.getRandomSource(),
-                    config.tolerance / 8F, config.borderRange * config.borderRange / 64F);
+                    Math.abs(config.tolerance / 8F), config.borderRange * config.borderRange / 64F);
         }
 
         @Override
