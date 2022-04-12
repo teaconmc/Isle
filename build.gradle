@@ -27,8 +27,8 @@ archivesBaseName = 'Isle-Forge-1.18'
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 
 minecraft {
-    // mappings channel: 'official', version: '1.18.1'
-    mappings channel: 'parchment', version: '2021.12.19-1.18.1'
+    // mappings channel: 'official', version: '1.18.2'
+    mappings channel: 'parchment', version: '2022.03.13-1.18.2'
     accessTransformer = file('src/main/resources/META-INF/accesstransformer.cfg')
 
     runs {
@@ -68,8 +68,16 @@ minecraft {
     }
 }
 
+repositories {
+    maven {
+        url "https://cursemaven.com"
+    }
+}
+
 dependencies {
-    minecraft 'net.minecraftforge:forge:1.18.1-39.0.9'
+    minecraft 'net.minecraftforge:forge:1.18.2-40.0.44'
+
+    implementation fg.deobf('curse.maven:journeymap-32274:3696405')
 }
 
 jar {
@@ -79,18 +87,15 @@ jar {
             "Specification-Vendor": "ustc-zzzz",
             "Specification-Version": "1",
             "Implementation-Title": project.name,
-            "Implementation-Version": "${version}",
+            "Implementation-Version": "${project.version}",
             "Implementation-Vendor": "TeaConMC",
             "Implementation-Timestamp": DateTimeFormatter.ISO_INSTANT.format(Instant.now().truncatedTo(ChronoUnit.SECONDS))
         ])
     }
 }
 
-def reobfFile = file("$buildDir/reobfJar/output.jar")
-def reobfArtifact = artifacts.add('default', reobfFile) {
-    type 'jar'
-    builtBy 'reobfJar'
-}
+jar.finalizedBy('reobfJar')
+publish.dependsOn('reobfJar')
 
 publishing {
     publications {
@@ -98,7 +103,7 @@ publishing {
             groupId = "org.teacon"
             artifactId = "Isle-Forge-1.18"
 
-            artifact reobfArtifact
+            artifact jar
             pom {
                 name = 'Isle for Minecraft 1.18'
                 description = 'Generate a lonely isle in endless sea'
