@@ -1,7 +1,3 @@
-import java.time.Instant
-import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
-
 buildscript {
     repositories {
         maven { url = 'https://files.minecraftforge.net/maven' }
@@ -14,151 +10,42 @@ buildscript {
     }
 }
 
+apply plugin: 'eclipse'
+apply plugin: 'maven-publish'
 apply plugin: 'net.minecraftforge.gradle'
 apply plugin: 'org.parchmentmc.librarian.forgegradle'
 
-apply plugin: 'eclipse'
-apply plugin: 'maven-publish'
-
-version = '0.4.0'
-group = 'org.teacon'
-archivesBaseName = 'Isle-Forge-1.18'
+apply from: 'gradle/teacon-forge.gradle'
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 
-minecraft {
-    // mappings channel: 'official', version: '1.18.2'
-    mappings channel: 'parchment', version: '2022.03.13-1.18.2'
-    accessTransformer = file('src/main/resources/META-INF/accesstransformer.cfg')
+// definitions at gradle/teacon-forge.gradle
+teacon {
+    modId = 'isle'
+    modVersion = '0.4.0'
+    modLicense = 'BSD-3-Clause'
+    modGitHubRepo = 'teaconmc/Isle'
+    modAuthors = ['3TUSK', 'ustc-zzzz']
+    modDescription = 'Generate a big lonely island.'
 
-    runs {
-        client {
-            workingDirectory project.file('run')
-            property 'forge.logging.markers', 'REGISTRIES'
-            property 'forge.logging.console.level', 'info'
-            mods {
-                isle {
-                    source sourceSets.main
-                }
-            }
-        }
+    platform = 'forge-1.18.2-40.0.19'
+    parchment = '2022.03.13'
 
-        server {
-            workingDirectory project.file('run_server')
-            property 'forge.logging.markers', 'REGISTRIES'
-            property 'forge.logging.console.level', 'info'
-            mods {
-                isle {
-                    source sourceSets.main
-                }
-            }
-        }
+    // uncomment these lines if you need
+    modName = 'Isle' // default to repo name
+    // modGitHubBranch = 1.18-forge // for referring the license
+    modifyMemberAccess = true // for access transformer
+    // useDataGeneration = true // for data generation
+    // publishTask = shadowJar // for shadow jar or other usages
+    // lazyTokens = ['minecraft_classpath': { project.configurations.shadow.asPath }] // for runtime tokens
 
-        data {
-            workingDirectory project.file('run')
-            property 'forge.logging.markers', 'REGISTRIES'
-            property 'forge.logging.console.level', 'info'
-            args '--mod', 'isle', '--all', '--output', file('src/generated/resources/')
-            mods {
-                isle {
-                    source sourceSets.main
-                }
-            }
-        }
-    }
+    // use './gradlew -q printModMeta > src/main/resources/META-INF/mods.toml' to generate mod meta
 }
 
 repositories {
-    maven {
-        url "https://cursemaven.com"
-    }
+    maven { url = 'https://cursemaven.com' }
 }
 
 dependencies {
-    minecraft 'net.minecraftforge:forge:1.18.2-40.0.44'
-
     implementation fg.deobf('curse.maven:journeymap-32274:3696405')
-}
-
-jar {
-    manifest {
-        attributes([
-            "Specification-Title": "Isle",
-            "Specification-Vendor": "ustc-zzzz",
-            "Specification-Version": "1",
-            "Implementation-Title": project.name,
-            "Implementation-Version": "${project.version}",
-            "Implementation-Vendor": "TeaConMC",
-            "Implementation-Timestamp": DateTimeFormatter.ISO_INSTANT.format(Instant.now().truncatedTo(ChronoUnit.SECONDS))
-        ])
-    }
-}
-
-jar.finalizedBy('reobfJar')
-publish.dependsOn('reobfJar')
-
-publishing {
-    publications {
-        release(MavenPublication) {
-            groupId = "org.teacon"
-            artifactId = "Isle-Forge-1.18"
-
-            artifact jar
-            pom {
-                name = 'Isle for Minecraft 1.18'
-                description = 'Generate a lonely isle in endless sea'
-                url = 'https://github.com/teaconmc/Isle'
-                licenses {
-                    license {
-                        name = 'BSD-3-Clause'
-                        url = 'https://github.com/teaconmc/Isle/blob/1.18-forge/LICENSE'
-                    }
-                }
-                developers {
-                    developer {
-                        id = '3TUSK'
-                        name = '3TUSK'
-                    }
-                }
-                issueManagement {
-                    system = 'GitHub Issues'
-                    url = 'https://github.com/teaconmc/Isle/issues'
-                }
-                scm {
-                    url = 'https://github.com/teaconmc/Isle'
-                    connection = 'scm:git:git://github.com/teaconmc/Isle.git'
-                    developerConnection = 'scm:git:git@github.com:teaconmc/Isle.git'
-                }
-            }
-        }
-    }
-    repositories {
-        maven {
-            name = "teacon"
-            url = "s3://maven/"
-            credentials(AwsCredentials) {
-                accessKey = System.env.ARCHIVE_ACCESS_KEY
-                secretKey = System.env.ARCHIVE_SECRET_KEY
-            }
-        }
-    }
-}
-
-tasks.withType(PublishToMavenRepository) {
-    onlyIf {
-        System.env.ARCHIVE_ACCESS_KEY && System.env.ARCHIVE_SECRET_KEY
-    }
-}
-
-/**
- * A simple task to pass down the artifact name and path to other GitHub actions.
- */
-task("githubActionOutput") {
-    onlyIf {
-        System.env.GITHUB_ACTIONS
-    }
-    doLast {
-        println "::set-output name=artifact_path::${jar.archiveFile.get().asFile.absolutePath}"
-        println "::set-output name=artifact_name::${jar.archiveFileName.get()}"
-    }
 }
