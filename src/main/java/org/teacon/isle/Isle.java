@@ -24,7 +24,6 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.IExtensionPoint;
 import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.common.Mod;
-import org.jetbrains.annotations.NotNull;
 
 import javax.annotation.ParametersAreNonnullByDefault;
 
@@ -172,7 +171,6 @@ public final class Isle {
             return new Holder.Direct<>(newSettings);
         }
 
-        @NotNull
         private static DensityFunction initContinent(int borderRange, int tolerance) {
             var slope = -0.16 / tolerance;
             var intercept = -0.15 - slope * (borderRange / 2 / ISLE_SCALE);
