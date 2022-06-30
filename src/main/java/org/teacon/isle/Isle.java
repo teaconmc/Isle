@@ -45,6 +45,10 @@ public final class Isle {
     private static final ResourceKey<NoiseParameters> TEMPERATURE = createNoiseKey("temperature");
     private static final ResourceKey<NoiseParameters> CONTINENTALNESS = createNoiseKey("continentalness");
 
+    private static final Distance.ControlPoints STANDARD = new Distance.ControlPoints(1.0, 0.0, -1.0);
+    private static final Distance.ControlPoints LOWER = new Distance.ControlPoints(0.55, -0.15, -1.0);
+    private static final Distance.ControlPoints UPPER = new Distance.ControlPoints(1.0, -0.15, -0.455);
+
     public Isle() {
         if (FMLEnvironment.dist == Dist.CLIENT) {
             MinecraftForge.EVENT_BUS.addListener(Debug::addInfo);
@@ -97,8 +101,8 @@ public final class Isle {
                     var normalizedX = Math.abs(camera.getX() * 2 / config.borderRange);
                     var normalizedZ = Math.abs(camera.getZ() * 2 / config.borderRange);
                     var normalizedOffset = (double) config.tolerance / config.borderRange;
-                    var cmin = Distance.interpolate(normalizedX, normalizedZ, normalizedOffset, -0.15);
-                    var cmax = Distance.interpolate(normalizedX, normalizedZ, -normalizedOffset, -0.15);
+                    var cmin = Distance.interpolate(normalizedX, normalizedZ, normalizedOffset, LOWER);
+                    var cmax = Distance.interpolate(normalizedX, normalizedZ, -normalizedOffset, UPPER);
                     event.getLeft().addAll(List.of("", String.format("[Isle] CMIN: %.5f CMAX: %.5f", cmin, cmax)));
                 }
             }
@@ -156,34 +160,35 @@ public final class Isle {
 
     @MethodsReturnNonnullByDefault
     @ParametersAreNonnullByDefault
-    private record Distance(double borderSize, double offset, double halfPoint) implements DensityFunction {
+    private record Distance(double borderSize, double offset, ControlPoints controls) implements DensityFunction {
         private static final MapCodec<Distance> MAP_CODEC = RecordCodecBuilder.mapCodec(b -> b.group(
                         Codec.DOUBLE.fieldOf("border_size").stable().forGetter(Distance::borderSize),
                         Codec.DOUBLE.fieldOf("distance_offset").stable().forGetter(Distance::offset),
-                        Codec.DOUBLE.fieldOf("half_point").stable().forGetter(Distance::halfPoint))
+                        ControlPoints.MAP_CODEC.fieldOf("controls").stable().forGetter(Distance::controls))
                 .apply(b, Distance::new));
 
         private static final double ISLE_SCALE_SQ = Math.PI / 2.0;
 
         private static double interpolate(double normalizedX, double normalizedZ,
-                                          double normalizedOffset, double halfPoint) {
+                                          double normalizedOffset, ControlPoints controls) {
+            var halfPoint = controls.half;
             var normalizedLength = Math.sqrt(Mth.square(normalizedX) + Mth.square(normalizedZ));
             var factorHalfSq = Mth.square(Math.max(0, normalizedLength + normalizedOffset)) * ISLE_SCALE_SQ - 1;
             if (factorHalfSq > 0) {
                 var factorRange = 1 - Math.max(0, Math.max(normalizedX, normalizedZ) + normalizedOffset);
                 if (factorRange > 0) {
-                    return Mth.lerp(factorHalfSq / (factorHalfSq + Mth.square(factorRange)), halfPoint, -1);
+                    return Mth.lerp(factorHalfSq / (factorHalfSq + Mth.square(factorRange)), halfPoint, controls.min);
                 }
-                return -1;
+                return controls.min;
             }
-            return Mth.lerp(-factorHalfSq, halfPoint, 1);
+            return Mth.lerp(-factorHalfSq, halfPoint, controls.max);
         }
 
         @Override
         public double compute(FunctionContext context) {
             var normalizedX = Math.abs(2 * context.blockX() + 1) / this.borderSize;
             var normalizedZ = Math.abs(2 * context.blockZ() + 1) / this.borderSize;
-            return interpolate(normalizedX, normalizedZ, 2 * this.offset / this.borderSize, this.halfPoint);
+            return interpolate(normalizedX, normalizedZ, 2 * this.offset / this.borderSize, this.controls);
         }
 
         @Override
@@ -210,6 +215,16 @@ public final class Isle {
         public Codec<? extends DensityFunction> codec() {
             return MAP_CODEC.codec();
         }
+
+        @MethodsReturnNonnullByDefault
+        @ParametersAreNonnullByDefault
+        private record ControlPoints(double max, double half, double min) {
+            private static final MapCodec<ControlPoints> MAP_CODEC = RecordCodecBuilder.mapCodec(b -> b.group(
+                            Codec.DOUBLE.fieldOf("max").stable().forGetter(ControlPoints::max),
+                            Codec.DOUBLE.fieldOf("half").stable().forGetter(ControlPoints::half),
+                            Codec.DOUBLE.fieldOf("min").stable().forGetter(ControlPoints::min))
+                    .apply(b, ControlPoints::new));
+        }
     }
 
     @MethodsReturnNonnullByDefault
@@ -231,11 +246,11 @@ public final class Isle {
             var originalRouter = originalSettings.noiseRouter();
 
             // step 0: initial ridges and continent density function
-            var initialRidges = mul(
-                    max(new Distance(borderRange, 0, 0), constant(0.05)), getFunction(RIDGES));
+            var initialRidges = mul(max(
+                    new Distance(borderRange, 0, STANDARD), constant(0.05)), getFunction(RIDGES));
             var initialContinent = initContinent(
-                    new Distance(borderRange, tolerance * 0.5, -0.15),
-                    new Distance(borderRange, tolerance * -0.5, -0.15));
+                    new Distance(borderRange, tolerance * 0.5, LOWER),
+                    new Distance(borderRange, tolerance * -0.5, UPPER));
 
             // step 1: copied from NoiseRouterData.bootstrap
             var bootstrapDensityFunction2 = flatCache(initialContinent);
