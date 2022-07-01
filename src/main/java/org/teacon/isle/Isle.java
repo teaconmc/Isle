@@ -317,6 +317,12 @@ public final class Isle {
         }
 
         @Override
+        public ChunkGenerator withSeed(long pSeed) {
+            var newBiomeSource = this.biomeSource.withSeed(pSeed);
+            return new IsleChunkGenerator(this.structureSets, this.noises, newBiomeSource, pSeed, this.config);
+        }
+
+        @Override
         protected Codec<? extends ChunkGenerator> codec() {
             return CODEC;
         }
