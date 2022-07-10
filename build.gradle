@@ -22,7 +22,7 @@ java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 // definitions at gradle/teacon-forge.gradle
 teacon {
     modId = 'isle'
-    modVersion = '0.4.1'
+    modVersion = '0.4.2'
     modLicense = 'BSD-3-Clause'
     modGitHubRepo = 'teaconmc/Isle'
     modAuthors = ['3TUSK', 'ustc-zzzz']
